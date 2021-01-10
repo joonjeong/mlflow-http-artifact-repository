@@ -1,2 +1,2 @@
 # mlflow-http-artifact-repository
-Http Artifact Repository Server for MLflow
+Http Artifact Repository Plugin & Server for MLflow
