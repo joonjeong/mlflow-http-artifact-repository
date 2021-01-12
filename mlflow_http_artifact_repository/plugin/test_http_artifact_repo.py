@@ -1,18 +1,10 @@
-import posixpath
-import re
 import uuid
 
-import pytest
-
-from io import BytesIO
-
-from mlflow.exceptions import MlflowException
 from mlflow.entities import FileInfo
-from mlflow.utils.file_utils import TempDir
-from pytest_httpserver.httpserver import HeaderValueMatcher
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 
 from .http_artifact_repo import HttpArtifactRepository
+
 
 def test_list_artifacts(httpserver):
     httpserver \
@@ -44,7 +36,7 @@ def test_list_artifacts(httpserver):
             "/api/1.0/artifact-repository/0/YyMOD18lNmU/artifacts/model/misc/dummy.txt/"
         ) \
         .respond_with_json([])
-    
+
     http_artifact_repo = HttpArtifactRepository(
         httpserver.url_for("/api/1.0/artifact-repository/0/YyMOD18lNmU/artifacts")
     )
@@ -58,7 +50,7 @@ def test_list_artifacts(httpserver):
     actual = sorted(http_artifact_repo.list_artifacts(), key=lambda f: f.path)
     for e, a in zip(expected, actual):
         assert e == a
-    
+
     expected = sorted([
         FileInfo("model/misc", True, None),
         FileInfo("model/v1.pkl", False, 255),
@@ -66,7 +58,7 @@ def test_list_artifacts(httpserver):
     actual = sorted(http_artifact_repo.list_artifacts('model'), key=lambda f: f.path)
     for e, a in zip(expected, actual):
         assert e == a
-    
+
     expected = sorted([
         FileInfo("model/misc/dummy.txt", False, 0),
     ], key=lambda f: f.path)
@@ -75,7 +67,7 @@ def test_list_artifacts(httpserver):
         assert e == a
 
     actual = sorted(http_artifact_repo.list_artifacts('model/misc/dummy.txt'), key=lambda f: f.path)
-    assert len(actual) == 0 
+    assert len(actual) == 0
 
 
 def test_log_artifact(tmp_path, httpserver):
@@ -89,7 +81,7 @@ def test_log_artifact(tmp_path, httpserver):
     models_v1_pkl.write_text(uuid.uuid4().hex.upper())
     models_v2_pkl = models_path / "v2.pkl"
     models_v2_pkl.write_text(uuid.uuid4().hex.upper())
-    
+
     multipart_boundary = 'test_log_artifact'
     train_csv_encoder = MultipartEncoder(fields={
         'artifacts': (train_csv.name, train_csv.read_text().encode())
@@ -103,7 +95,7 @@ def test_log_artifact(tmp_path, httpserver):
     models_v2_pkl_encoder = MultipartEncoder(fields={
         'artifacts': (models_v2_pkl.name, models_v2_pkl.read_text().encode())
     }, boundary=multipart_boundary)
-    
+
     http_artifact_repo = HttpArtifactRepository(
         httpserver.url_for("/api/1.0/artifact-repository/0/YyMOD18lNmU/artifacts")
     )
@@ -134,6 +126,12 @@ def test_log_artifact(tmp_path, httpserver):
         data=train_csv_encoder.to_string(),
     ).respond_with_json({"status": "success"})
     httpserver.expect_ordered_request(
+        "/api/1.0/artifact-repository/0/YyMOD18lNmU/artifacts/data/test.csv",
+        method="POST",
+        headers={'Content-Type': test_csv_encoder.content_type},
+        data=test_csv_encoder.to_string(),
+    ).respond_with_json({"status": "success"})
+    httpserver.expect_ordered_request(
         "/api/1.0/artifact-repository/0/YyMOD18lNmU/artifacts/",
     ).respond_with_json([
         {"path": "data", "is_dir": True},
@@ -144,9 +142,10 @@ def test_log_artifact(tmp_path, httpserver):
     httpserver.expect_ordered_request(
         "/api/1.0/artifact-repository/0/YyMOD18lNmU/artifacts/data/",
     ).respond_with_json([
+        {"path": f"data/{test_csv.name}", "size": test_csv.stat().st_size},
         {"path": f"data/{train_csv.name}", "size": train_csv.stat().st_size},
     ])
-    
+
     http_artifact_repo.log_artifact(str(models_v1_pkl), multipart_boundary=multipart_boundary)
     http_artifact_repo.log_artifact(str(models_v2_pkl), multipart_boundary=multipart_boundary)
     expected = sorted([
@@ -154,11 +153,12 @@ def test_log_artifact(tmp_path, httpserver):
         FileInfo(models_v2_pkl.name, False, models_v2_pkl.stat().st_size),
     ], key=lambda f: f.path)
     actual = sorted(http_artifact_repo.list_artifacts(), key=lambda f: f.path)
-    
+
     for e, a in zip(expected, actual):
         assert e == a
 
     assert http_artifact_repo.log_artifact(str(train_csv), "data", multipart_boundary=multipart_boundary)
+    assert http_artifact_repo.log_artifact(str(test_csv), "data", multipart_boundary=multipart_boundary)
     expected = sorted([
         FileInfo("data", True, None),
         FileInfo(models_v1_pkl.name, False, models_v1_pkl.stat().st_size),
@@ -169,6 +169,7 @@ def test_log_artifact(tmp_path, httpserver):
         assert e == a
 
     expected = sorted([
+        FileInfo(f"data/{test_csv.name}", False, test_csv.stat().st_size),
         FileInfo(f"data/{train_csv.name}", False, train_csv.stat().st_size),
     ], key=lambda f: f.path)
     actual = sorted(http_artifact_repo.list_artifacts("data"), key=lambda f: f.path)
@@ -187,7 +188,7 @@ def test_log_artifacts(tmp_path, httpserver):
     models_v1_pkl.write_text(uuid.uuid4().hex.upper())
     models_v2_pkl = models_path / "v2.pkl"
     models_v2_pkl.write_text(uuid.uuid4().hex.upper())
-    
+
     multipart_boundary = 'test_log_artifacts'
     root_encoder = MultipartEncoder(fields=[
         ('artifacts', (test_csv.name, test_csv.read_text().encode())),
@@ -197,11 +198,11 @@ def test_log_artifacts(tmp_path, httpserver):
         ('artifacts', (models_v2_pkl.name, models_v2_pkl.read_text().encode())),
         ('artifacts', (models_v1_pkl.name, models_v1_pkl.read_text().encode())),
     ], boundary=multipart_boundary)
-    
+
     http_artifact_repo = HttpArtifactRepository(
         httpserver.url_for("/api/1.0/artifact-repository/0/YyMOD18lNmU/artifacts")
     )
-    
+
     httpserver.expect_ordered_request(
         "/api/1.0/artifact-repository/0/YyMOD18lNmU/artifacts/",
         method="POST",
@@ -227,7 +228,7 @@ def test_log_artifacts(tmp_path, httpserver):
         {"path": f"models/{models_v1_pkl.name}", "size": models_v1_pkl.stat().st_size},
         {"path": f"models/{models_v2_pkl.name}", "size": models_v2_pkl.stat().st_size},
     ])
-    
+
     http_artifact_repo.log_artifacts(str(tmp_path), multipart_boundary=multipart_boundary)
     expected = sorted([
         FileInfo("models", True, None),
@@ -260,7 +261,7 @@ def test_log_artifacts_under_out_dir(tmp_path, httpserver):
     models_v1_pkl.write_text(uuid.uuid4().hex.upper())
     models_v2_pkl = models_path / "v2.pkl"
     models_v2_pkl.write_text(uuid.uuid4().hex.upper())
-    
+
     multipart_boundary = 'test_log_artifacts'
     root_encoder = MultipartEncoder(fields=[
         ('artifacts', (test_csv.name, test_csv.read_text().encode())),
@@ -270,11 +271,11 @@ def test_log_artifacts_under_out_dir(tmp_path, httpserver):
         ('artifacts', (models_v2_pkl.name, models_v2_pkl.read_text().encode())),
         ('artifacts', (models_v1_pkl.name, models_v1_pkl.read_text().encode())),
     ], boundary=multipart_boundary)
-    
+
     http_artifact_repo = HttpArtifactRepository(
         httpserver.url_for("/api/1.0/artifact-repository/0/YyMOD18lNmU/artifacts")
     )
-    
+
     httpserver.expect_ordered_request(
         "/api/1.0/artifact-repository/0/YyMOD18lNmU/artifacts/out/",
         method="POST",
@@ -305,7 +306,7 @@ def test_log_artifacts_under_out_dir(tmp_path, httpserver):
         {"path": f"models/{models_v1_pkl.name}", "size": models_v1_pkl.stat().st_size},
         {"path": f"models/{models_v2_pkl.name}", "size": models_v2_pkl.stat().st_size},
     ])
-    
+
     http_artifact_repo.log_artifacts(str(tmp_path), artifact_path='out', multipart_boundary=multipart_boundary)
     expected = sorted([
         FileInfo("out", True, None),
@@ -314,7 +315,7 @@ def test_log_artifacts_under_out_dir(tmp_path, httpserver):
 
     for e, a in zip(expected, actual):
         assert e == a
-    
+
     expected = sorted([
         FileInfo("models", True, None),
         FileInfo(train_csv.name, False, train_csv.stat().st_size),
@@ -333,11 +334,20 @@ def test_log_artifacts_under_out_dir(tmp_path, httpserver):
 
     for e, a in zip(expected, actual):
         assert e == a
-    
-def test__download_file(prepare_remote_artifact, local_artifact_root, http_artifact_repo):
-    prepare_remote_artifact(0, "run-hash")
 
-    local_artifact_path = local_artifact_root / 'v1.pkl'
-    http_artifact_repo._download_file('model/v1.pkl', str(local_artifact_path))
-    assert local_artifact_path.exists()
-    assert 'some-weights' == local_artifact_path.read_text()
+
+def test__download_file(tmp_path, httpserver):
+    httpserver \
+        .expect_request(
+            "/api/1.0/artifact-repository/0/YyMOD18lNmU/artifacts/model/v1.pkl"
+        ) \
+        .respond_with_data("some-weights", content_type="text/plain")
+
+    http_artifact_repo = HttpArtifactRepository(
+        httpserver.url_for("/api/1.0/artifact-repository/0/YyMOD18lNmU/artifacts")
+    )
+
+    download_path = tmp_path / 'v1.pkl'
+    http_artifact_repo._download_file('model/v1.pkl', str(download_path))
+    assert download_path.exists()
+    assert 'some-weights' == download_path.read_text()

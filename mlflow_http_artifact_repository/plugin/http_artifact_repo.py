@@ -7,11 +7,10 @@ import requests
 
 from mlflow.entities import FileInfo
 from mlflow.store.artifact.artifact_repo import ArtifactRepository
-from mlflow.tracking._tracking_service import utils
-from mlflow.utils.file_utils import relative_path_to_artifact_path
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 
 logger = logging.Logger(__name__)
+
 
 class HttpArtifactRepository(ArtifactRepository):
     """
@@ -44,17 +43,22 @@ class HttpArtifactRepository(ArtifactRepository):
         artifact_path = '' if not artifact_path else artifact_path
         local_path = posixpath.abspath(local_dir)
         for (root, _, filenames) in os.walk(local_path):
-            if not filenames: continue
+            if not filenames:
+                continue
             rel_path = os.path.relpath(root, local_path)
 
             resource_uri = posixpath.join(self.artifact_uri, artifact_path, rel_path)
             resource_uri = resource_uri if resource_uri.endswith("/") else f"{resource_uri}/"
-            mpe = MultipartEncoder(fields=[
+
+            multipart_fields = [
                 ('artifacts', (file_name, open(posixpath.join(root, file_name), 'rb')))
-            for file_name in filenames], boundary=boundary)
+                for file_name in filenames]
+
+            mpe = MultipartEncoder(fields=multipart_fields, boundary=boundary)
             resp = requests.post(resource_uri, headers={'Content-Type': mpe.content_type}, data=mpe)
             resp.raise_for_status()
-            if not resp.ok: return False
+            if not resp.ok:
+                return False
 
         return True
 
